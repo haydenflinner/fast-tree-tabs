@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>FTT bench</title>
+  <style>
+    body { font: 14px/1.5 system-ui, sans-serif; max-width: 52em; margin: 2em auto; padding: 0 1em; }
+    button { font: inherit; padding: 6px 12px; margin-right: 8px; cursor: pointer; }
+    input { width: 4em; font: inherit; }
+    pre { background: #f4f4f4; padding: 1em; white-space: pre-wrap; }
+    .dim { color: #777; }
+  </style>
+</head>
+<body>
+  <h1>Fast Tree Tabs bench</h1>
+  <p class="dim">
+    If Tree Style Tab is installed and enabled, its public API notifications are
+    timed too (event &rarr; "processing complete" signal — slightly before its
+    actual sidebar paint). Ours is event &rarr; rendered frame.
+  </p>
+  <p id="status">…</p>
+  <p>
+    <input id="n" type="number" value="100" min="1" max="2000">
+    <button id="create">Create N tabs</button>
+    <button id="activate">Activate N tabs</button>
+    <button id="close">Close N tabs</button>
+  </p>
+  <pre id="out">results…</pre>
+  <script src="bench.js"></script>
+</body>
+</html>

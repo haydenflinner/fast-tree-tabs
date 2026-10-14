@@ -117,9 +117,25 @@ browser.windows.onCreated.addListener(async win => {
 });
 
 // ---------------------------------------------------------------------------
+// bench channel: forwards sidebar 'painted' signals to any bench page ports
+
+const benchPorts = new Set();
+
+function benchForward(msg) {
+  for (const p of benchPorts) {
+    try { p.postMessage(msg); } catch (e) { benchPorts.delete(p); }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // sidebar connection
 
 browser.runtime.onConnect.addListener(port => {
+  if (port.name === 'bench') {
+    benchPorts.add(port);
+    port.onDisconnect.addListener(() => benchPorts.delete(port));
+    return;
+  }
   if (port.name !== 'sidebar') return;
 
   let winId = null;
@@ -136,6 +152,7 @@ browser.runtime.onConnect.addListener(port => {
     if (winId == null) return;
 
     switch (msg.type) {
+      case 'painted':        return benchForward(msg);
       case 'activate':       return I.activate(winId, msg.tabId);
       case 'close':          return I.close(winId, msg.tabId);
       case 'closeTree':      return I.closeTree(winId, msg.tabId);

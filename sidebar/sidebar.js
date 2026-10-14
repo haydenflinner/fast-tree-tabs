@@ -142,6 +142,11 @@ function render() {
     viewport.appendChild(el); // keep DOM order === row order
   }
 
+  // bench hook: report after the next frame
+  requestAnimationFrame(() => {
+    if (port) port.postMessage({ type: 'painted', version: rowVersion, count: rows.length });
+  });
+
   for (const [id, el] of rendered) {
     if (seen.has(id)) continue;
     rendered.delete(id);
@@ -383,6 +388,7 @@ scroller.addEventListener('contextmenu', e => {
     e.preventDefault();
     placeMenu(e.clientX, e.clientY, [
       { label: 'New tab', act: () => send({ type: 'newTab' }) },
+      { label: 'Run bench', act: () => browser.tabs.create({ url: browser.runtime.getURL('bench/bench.html') }) },
     ]);
   }
 });
