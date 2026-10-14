@@ -41,8 +41,11 @@ let myWindowId = null;
 
 async function connect() {
   try {
-    const win = await browser.windows.getCurrent();
+    // windowTypes filter keeps getCurrent from resolving to the sidebar's
+    // own context window on some Firefox versions
+    const win = await browser.windows.getCurrent({ windowTypes: ['normal'] });
     myWindowId = win.id;
+    console.log('[tst-next sidebar] connected for window', myWindowId);
     port = browser.runtime.connect({ name: 'sidebar' });
     port.onMessage.addListener(onSnapshot);
     port.onDisconnect.addListener(() => {
@@ -51,6 +54,7 @@ async function connect() {
     });
     port.postMessage({ type: 'hello', windowId: myWindowId });
   } catch (e) {
+    console.error('[tst-next sidebar] connect failed', e);
     setTimeout(connect, 1000);
   }
 }
@@ -65,6 +69,7 @@ function onSnapshot(msg) {
   if (msg.type !== 'snapshot' || msg.version <= rowVersion) return;
   rowVersion = msg.version;
   rows = msg.rows;
+  console.log('[tst-next sidebar] snapshot v' + msg.version, rows.length, 'rows');
   if (msg.meta) {
     animations = !!msg.meta.animations;
     if (msg.meta.indent) INDENT = msg.meta.indent;
@@ -89,7 +94,19 @@ function maybeScrollToActive() {
 // render — one absolutely-positioned element per row
 
 function render() {
-  spacer.style.height = `${rows.length * ROW_H}px`;
+  // Always allow scrolling one viewport past the end. ScrollTop only ever
+  // clamps when content shrinks below the visible area — with a full
+  // viewport of trailing space, closing rows (even whole trees) at the
+  // bottom never moves anything on screen.
+  spacer.style.height = `${rows.length * ROW_H + scroller.clientHeight}px`;
+
+  // Content is exactly one pane wide, plus indent space for the deepest
+  // row — every row keeps its full label width; deep trees scroll sideways.
+  let maxDepth = 0;
+  for (const row of rows) if (row.depth > maxDepth) maxDepth = row.depth;
+  const contentW = scroller.clientWidth + maxDepth * INDENT;
+  spacer.style.width   = `${contentW}px`;
+  viewport.style.width = `${contentW}px`;
 
   const seen = new Set();
   for (let i = 0; i < rows.length; i++) {
@@ -154,13 +171,13 @@ function buildRow() {
     '<span class="twisty"></span>' +
     '<span class="favicon"><img alt=""></span>' +
     '<span class="label"></span>' +
-    '<span class="counter"></span>' +
-    '<button class="close" title="Close">×</button>';
+    '<span class="tail"><span class="counter" title="Collapse/expand"></span>' +
+    '<button class="close" title="Close">×</button></span>';
   el._twisty  = el.children[0];
   el._favicon = el.children[1].firstChild;
   el._label   = el.children[2];
-  el._counter = el.children[3];
-  el._close   = el.children[4];
+  el._counter = el.children[3].children[0];
+  el._close   = el.children[3].children[1];
   return el;
 }
 
@@ -243,6 +260,8 @@ viewport.addEventListener('click', e => {
   if (id == null) return;
   if (e.target.classList.contains('close')) {
     send({ type: 'close', tabId: id });
+  } else if (e.target.classList.contains('counter')) {
+    send({ type: 'toggleCollapse', tabId: id });
   } else if (e.target.classList.contains('twisty')) {
     send({ type: 'toggleCollapse', tabId: id });
   } else if (!handleSelectClick(e, id)) {
@@ -261,7 +280,7 @@ viewport.addEventListener('auxclick', e => {
 viewport.addEventListener('dblclick', e => {
   const id = rowTabId(e.target);
   if (id == null) return;
-  if (e.target.classList.contains('close') || e.target.classList.contains('twisty'))
+  if (e.target.closest('.tail') || e.target.classList.contains('twisty'))
     return;
   const row = rowById(id);
   if (row && (row.flags & ROW_HAS_CHILDREN)) {
@@ -450,6 +469,9 @@ viewport.addEventListener('dragend', () => {
 });
 
 // ---------------------------------------------------------------------------
+
+// spacer size depends on clientHeight
+window.addEventListener('resize', () => render(), { passive: true });
 
 ROW_H = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--row-h')) || 26;
 connect();

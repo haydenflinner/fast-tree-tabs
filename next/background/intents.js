@@ -25,6 +25,13 @@ function activeRec(win) {
   return null;
 }
 
+// A fresh, unused new tab — nesting further new tabs under it produces a
+// staircase, so siblings are used instead.
+function isBlankTab(rec) {
+  const u = rec.url || '';
+  return !u || u === 'about:newtab' || u === 'about:home' || u === 'about:blank';
+}
+
 export async function placeNewTab(nativeTab) {
   const rec = trackTab(nativeTab); // creates the Win if unseen
   const win = getWin(nativeTab.windowId);
@@ -40,8 +47,17 @@ export async function placeNewTab(nativeTab) {
     const active = activeRec(win);
     switch (cfg.newTabNoOpener) {
       case 'child-of-active':
-        if (active && !active.pinned)
-          parentId = active.id;
+        if (active && !active.pinned) {
+          if (isBlankTab(active)) {
+            // active is a throwaway new tab — attach beside it (same parent,
+            // right after its subtree) rather than nesting the staircase
+            parentId = active.parentId;
+            const filtered = win.order.filter(id => id !== rec.id);
+            target = subtreeEnd(win, filtered, active.id);
+          } else {
+            parentId = active.id;
+          }
+        }
         break;
       case 'after-active': {
         const filtered = win.order.filter(id => id !== rec.id);
@@ -55,19 +71,19 @@ export async function placeNewTab(nativeTab) {
     }
   }
 
-  if (parentId != null) {
+  if (parentId != null)
     rec.parentId = parentId;
+  if (parentId != null && target == null) {
     const parent = win.tabs.get(parentId);
     if (parent.collapsed) parent.collapsed = false; // the new tab should be visible
-    await moveNative(win, [rec.id], insertionIndex(win, {
+    target = insertionIndex(win, {
       parentId,
       firstChild: cfg.insertChildAt === 'first',
       movingIds:  [rec.id],
-    }));
+    });
   }
-  else if (target != null) {
+  if (target != null)
     await moveNative(win, [rec.id], target);
-  }
 
   saveWindowTree(win.id);
   push(win.id);

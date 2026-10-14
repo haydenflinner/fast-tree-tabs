@@ -11,9 +11,12 @@
 // The tree is never stored as a separate structure. Rows for the sidebar are
 // derived by a linear flatten pass over `order`.
 
-export const DEBUG = false;
+export const DEBUG = true;
 export function log(...args) {
   if (DEBUG) console.log('[tst-next]', ...args);
+}
+export function logErr(...args) {
+  console.error('[tst-next]', ...args);
 }
 
 export const ROW_ACTIVE       = 1 << 0;
@@ -188,7 +191,7 @@ export function flatten(win) {
     if (!rec.everActive && rec.status !== 'loading') flags |= ROW_UNREAD;
 
     rows.push({
-      id,
+      id: rec.id,
       index: i,          // native index — needed for tabs.highlight
       depth: depthOf(win, rec, depthMemo),
       flags,

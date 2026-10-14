@@ -6,7 +6,7 @@
 import {
   windows, getWin, push, registerPort,
   trackTab, untrackTab, moveInOrder, updateTab, setActive, setHighlighted,
-  log,
+  log, logErr,
 } from './model.js';
 import { assignUids, restoreWindowTree, restoreTabParent, saveWindowTree, uidFor, rememberClosed } from './persistence.js';
 import { initConfig } from './config.js';
@@ -16,32 +16,40 @@ import * as I from './intents.js';
 // startup: build the model from scratch, then restore the tree
 
 async function init() {
-  await initConfig();
-  const wins = await browser.tabs.query({ windowType: 'normal' }).then(tabs => {
-    const byWin = new Map();
-    for (const t of tabs) {
-      if (!byWin.has(t.windowId)) byWin.set(t.windowId, []);
-      byWin.get(t.windowId).push(t);
-    }
-    return byWin;
-  });
-
-  for (const [winId, tabs] of wins) {
-    for (const tab of tabs) trackTab(tab);
-    const win = getWin(winId);
-    await assignUids(win);
-    if (!(await restoreWindowTree(win))) {
-      // no stored tree: fall back to opener links, which survive restarts
-      for (const rec of win.tabs.values()) {
-        const native = tabs.find(t => t.id === rec.id);
-        if (native && native.openerTabId != null && win.tabs.has(native.openerTabId))
-          rec.parentId = native.openerTabId;
+  try {
+    await initConfig();
+    const wins = await browser.tabs.query({ windowType: 'normal' }).then(tabs => {
+      const byWin = new Map();
+      for (const t of tabs) {
+        if (!byWin.has(t.windowId)) byWin.set(t.windowId, []);
+        byWin.get(t.windowId).push(t);
       }
+      return byWin;
+    });
+
+    for (const [winId, tabs] of wins) {
+      for (const tab of tabs) trackTab(tab);
+      const win = getWin(winId);
+      await assignUids(win);
+      if (!(await restoreWindowTree(win))) {
+        // no stored tree: fall back to opener links, which survive restarts
+        for (const rec of win.tabs.values()) {
+          const native = tabs.find(t => t.id === rec.id);
+          if (native && native.openerTabId != null && win.tabs.has(native.openerTabId))
+            rec.parentId = native.openerTabId;
+        }
+      }
+      push(winId, { immediate: true });
+      saveWindowTree(winId);
     }
-    push(winId, { immediate: true });
-    saveWindowTree(winId);
+    log('initialized', windows.size, 'windows');
+  } catch (e) {
+    logErr('init failed', e);
   }
-  log('initialized', windows.size, 'windows');
+
+  // bring the sidebar up on (re)load; open_at_install covers first install
+  try { await browser.sidebarAction.open(); }
+  catch (e) { log('sidebarAction.open failed (needs user gesture?)', e); }
 }
 
 // ---------------------------------------------------------------------------
@@ -120,6 +128,8 @@ browser.runtime.onConnect.addListener(port => {
 
     if (msg.type === 'hello') {
       winId = msg.windowId;
+      log('sidebar hello for window', winId, '— known:', [...windows.keys()]);
+      if (!windows.has(winId)) logErr('hello for unknown window', winId);
       registerPort(port, winId);
       return;
     }

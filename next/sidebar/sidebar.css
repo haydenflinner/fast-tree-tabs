@@ -44,9 +44,11 @@ html, body {
   left: 0;
   right: 0;
   overflow-y: auto;
-  overflow-x: hidden;
+  overflow-x: auto;
+  /* reserve gutter space always: rows never shift when the scrollbar
+     appears, and it can never sit on top of the close button */
+  scrollbar-gutter: stable;
 }
-#spacer { width: 1px; }
 #viewport {
   position: absolute;
   top: 0;
@@ -62,10 +64,13 @@ html, body {
   display: flex;
   align-items: center;
   height: var(--row-h);
-  padding-right: 4px;
+  /* wide enough that an overlay scrollbar (macOS) can't cover the
+     close button — scrollbar-gutter doesn't apply to those */
+  padding-right: 16px;
   box-sizing: border-box;
   cursor: default;
   white-space: nowrap;
+  background: var(--bg);
 }
 body.anim .row {
   transition: transform 0.15s ease, opacity 0.15s ease, padding-left 0.15s ease;
@@ -123,31 +128,69 @@ body.anim .row {
   flex: 1;
 }
 
+/* counter + close live in a sticky tail: pinned to the pane's right edge
+   regardless of horizontal scroll, so deep rows can scroll right to reveal
+   their labels without moving the close button */
+.tail {
+  position: sticky;
+  right: 0; /* cover to the pane edge — no strip for label text to bleed into */
+  flex: none;
+  display: flex;
+  align-items: center;
+  /* left pad separates label text from the counter; right pad keeps the
+     close button clear of an overlay scrollbar */
+  padding: 0 16px 0 8px;
+  /* opaque: label boxes still extend to the row's far end (sticky doesn't
+     affect layout) so their text draws underneath the tail */
+  background: var(--bg);
+}
+.row:hover .tail                   { background: var(--hover-bg); }
+.row.active .tail                  { background: var(--active-bg); }
+.row.highlighted:not(.active) .tail { background: #35343f; }
+
+/* the count doubles as the collapse toggle — only ever rendered on parents */
 .counter {
   flex: none;
   color: var(--dim);
   font-size: 10px;
   margin: 0 4px;
+  min-width: 8px;
+  text-align: center;
 }
+.row.has-children .counter { cursor: pointer; }
+.row.has-children .counter:hover { color: var(--fg); }
 .row.collapsed .counter { color: var(--accent); }
+/* slide out from under the overlaid close button on hover —
+   transform, not margin, so the label doesn't reflow */
+.row:hover .counter { transform: translateX(-20px); }
+body.anim .counter { transition: transform 0.15s ease; }
 
+/* absolutely overlaid on the tail's right padding so it doesn't shrink
+   the label when it appears on hover */
 .close {
-  flex: none;
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
   width: 16px;
   height: 16px;
   line-height: 14px;
   text-align: center;
   border: none;
-  background: transparent;
   color: var(--dim);
   border-radius: 3px;
   cursor: pointer;
   display: none;
   font-size: 12px;
   padding: 0;
+  /* opaque: covers whatever is behind it (e.g. counter digits) */
+  background: var(--bg);
 }
-.row:hover .close { display: block; }
-.close:hover { background: #55545f; color: var(--fg); }
+.row:hover .close                   { display: block; }
+.row:hover .close                   { background: var(--hover-bg); }
+.row.active .close                  { background: var(--active-bg); }
+.row.highlighted:not(.active) .close { background: #35343f; }
+.row .close:hover { background: #55545f; color: var(--fg); }
 
 #menu {
   position: fixed;

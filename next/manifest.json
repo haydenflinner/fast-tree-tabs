@@ -29,7 +29,7 @@
     },
     "default_panel": "/sidebar/sidebar.html",
     "browser_style": false,
-    "open_at_install": false
+    "open_at_install": true
   },
   "browser_specific_settings": {
     "gecko": {
