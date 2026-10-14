@@ -43,16 +43,18 @@ The original Tree Style Tabs kept two complete copies of tab state. The backgrou
 
 ## The numbers
 
-| Measure | Tree Style Tab | Fast Tree Tabs |
-|---|---|---|
-| Runtime JavaScript (background + common + sidebar) | ~49,300 lines | ~1,400 lines |
-| Protocol message types | 116 | 12 |
-| Copies of tab state | 2 | 1 |
-| Blocking-overlay code | yes | none |
-| Required permissions | 12 | 4 |
-| Optional permissions | 5 | 0 |
+| Measure | Tree Style Tab | Sidebery | Fast Tree Tabs |
+|---|---|---|---|
+| Runtime JavaScript | ~49,300 lines (1.7 MB) | 1.4 MB (bundled) | ~1,400 lines (55 KB) |
+| Protocol message types | 116 | — | 12 |
+| Copies of tab state | 2 | — | 1 |
+| Blocking-overlay code | yes | no | none |
+| Required permissions | 12 | 13 | 4 |
+| Optional permissions | 5 | 10 | 0 |
 
-This is a code-size reduction of about 97%. It is also a desync reduction by construction: one copy of state cannot disagree with itself.
+This is a code-size reduction of about 97% against Tree Style Tab. It is also a desync reduction by construction: one copy of state cannot disagree with itself.
+
+Fast Tree Tabs asks for only `tabs`, `sessions`, `storage`, and `clipboardWrite`. Tree Style Tab and Sidebery both request `cookies`, `contextualIdentities`, `menus`, `theme`, and more; Sidebery optionally requests `<all_urls>`, `webRequest`, `webRequestBlocking`, `history`, `downloads`, and `proxy`. The rows are compact single lines at 26px with no visible chrome until hover — controls stay out of the way and CSS variables make the theme easy to restyle.
 
 ## Performance
 
