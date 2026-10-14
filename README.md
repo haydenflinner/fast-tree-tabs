@@ -45,7 +45,7 @@ Measured on this machine, Node.js, the full per-event render pipeline:
 
 The cost is linear at about 0.3 us per row. A structured-clone `postMessage` of 74 KB costs well under one millisecond. At 500 tabs, a whole frame of state transfer finishes in about half a millisecond.
 
-We did not produce a matching number for Tree Style Tab. Its per-event cost has no single function to time. It is distributed across message handlers, a second copy of the state, about twenty index-map updates per tab change, and a DOM patch. The numbers above measure the *entire* cost of our equivalent path.
+We did not produce a matching number for Tree Style Tab. Its per-event cost has no single function to time. Its design spreads the work across message handlers, a second copy of the state, about twenty index-map updates per tab change, and a DOM patch. The numbers above measure the *entire* cost of our equivalent path.
 
 ## Features
 
