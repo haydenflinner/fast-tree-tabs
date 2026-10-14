@@ -19,15 +19,15 @@ This project started as a fork of [Tree Style Tab](https://github.com/piroor/tre
 
 ## Not implemented
 
-Pinned tab section, native tab groups, container colors, sound buttons, full context menus, the external addon API, bookmarks integration, localization. Each omission is deliberate. Add a feature only if the projection architecture can express it.
+Pinned tab section, native tab groups, container colors, sound buttons, full context menus, the external addon API, bookmarks integration, localization. Each omission is only because I don't use it — PRs welcome.
 
 ## Install
 
-Load `manifest.json` as a temporary add-on from `about:debugging`. The sidebar opens on install.
+Load `manifest.json` as a temporary add-on from `about:debugging`. The sidebar opens on install. Plugin store listing coming soon.
 
 ## Why a rewrite
 
-The original extension kept two complete copies of tab state. The background process held one copy. The sidebar held a second copy. More than one hundred message types kept the two copies synchronized. This design caused three classes of problems:
+The original Tree Style Tabs kept two complete copies of tab state. The background process held one copy. The sidebar held a second copy. More than one hundred message types kept the two copies synchronized. This design caused three classes of problems:
 
 - The copies went out of synchronization. Tabs landed in unexpected places.
 - A full-screen blocking overlay hid intermediate states during slow operations. When the overlay counter went wrong, the sidebar stopped accepting clicks. This failure happened in practice.
