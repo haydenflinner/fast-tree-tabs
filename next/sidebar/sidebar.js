@@ -1,9 +1,13 @@
 'use strict';
 
 // Pure projection: the background owns all state and pushes versioned
-// snapshots { version, rows }. We keep rows[] + a Map<tabId, rowElement> and
-// nothing else. No tab objects, no ordering logic, no waiting on anything.
+// snapshots { version, rows, meta }. We keep rows[] + a Map<tabId, rowElement>
+// and nothing else. No tab objects, no ordering logic, no waiting on anything.
 // Outbound messages are intents; inbound are snapshots. That's the protocol.
+//
+// Rows are absolutely positioned at translateY(index*ROW_H), so any reorder
+// animates for free via a CSS transition. Removed rows linger 160ms fading
+// out ("dying") before being pooled — revive them if the id reappears.
 
 const ROW_ACTIVE       = 1 << 0;
 const ROW_HIGHLIGHTED  = 1 << 1;
@@ -17,13 +21,16 @@ const ROW_UNREAD       = 1 << 7;
 const scroller = document.getElementById('scroller');
 const spacer   = document.getElementById('spacer');
 const viewport = document.getElementById('viewport');
-const INDENT   = 16;
-let ROW_H = 26;
-const OVERSCAN = 8;
+const menu     = document.getElementById('menu');
+
+let ROW_H  = 26;
+let INDENT = 16;
+let animations = true;
 
 let rows = [];
 let rowVersion = -1;
-let rendered = new Map(); // tabId -> element
+let rendered = new Map(); // tabId -> element (current rows)
+const dying = new Map();  // tabId -> element fading out
 const pool = [];
 
 // ---------------------------------------------------------------------------
@@ -58,8 +65,13 @@ function onSnapshot(msg) {
   if (msg.type !== 'snapshot' || msg.version <= rowVersion) return;
   rowVersion = msg.version;
   rows = msg.rows;
+  if (msg.meta) {
+    animations = !!msg.meta.animations;
+    if (msg.meta.indent) INDENT = msg.meta.indent;
+    document.body.classList.toggle('anim', animations);
+  }
   maybeScrollToActive();
-  scheduleRender();
+  render();
 }
 
 function maybeScrollToActive() {
@@ -74,51 +86,64 @@ function maybeScrollToActive() {
 }
 
 // ---------------------------------------------------------------------------
-// render — keyed element reuse over a virtual window
-
-let renderScheduled = false;
-function scheduleRender() {
-  if (renderScheduled) return;
-  renderScheduled = true;
-  requestAnimationFrame(() => {
-    renderScheduled = false;
-    render();
-  });
-}
+// render — one absolutely-positioned element per row
 
 function render() {
-  const count = rows.length;
-  spacer.style.height = `${count * ROW_H}px`;
+  spacer.style.height = `${rows.length * ROW_H}px`;
 
-  const viewH = scroller.clientHeight;
-  let first = Math.max(0, Math.floor(scroller.scrollTop / ROW_H) - OVERSCAN);
-  let last = Math.min(count, Math.ceil((scroller.scrollTop + viewH) / ROW_H) + OVERSCAN);
-
-  const needed = new Set();
-  for (let i = first; i < last; i++) needed.add(rows[i].id);
-
-  for (const [id, el] of rendered) {
-    if (!needed.has(id)) {
-      pool.push(el);
-      rendered.delete(id);
-    }
-  }
-
-  const ordered = [];
-  for (let i = first; i < last; i++) {
+  const seen = new Set();
+  for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
+    seen.add(row.id);
+
     let el = rendered.get(row.id);
+    let isNew = false;
+    if (!el && dying.has(row.id)) { // collapse+expand inside one fade: revive
+      el = dying.get(row.id);
+      clearTimeout(el._dieTimer);
+      dying.delete(row.id);
+      el.classList.remove('leaving');
+    }
     if (!el) {
       el = pool.pop() || buildRow();
-      rendered.set(row.id, el);
+      el._y = null;
+      isNew = true;
     }
-    updateRow(el, row);
-    ordered.push(el);
-  }
-  // replaceChildren reorders/moves existing nodes without recreating them.
-  viewport.replaceChildren(...ordered);
+    rendered.set(row.id, el);
 
-  viewport.style.transform = `translateY(${first * ROW_H}px)`;
+    updateRow(el, row);
+    if (isNew && animations) {
+      el.classList.add('new');
+      requestAnimationFrame(() => el.classList.remove('new'));
+    }
+
+    const y = i * ROW_H;
+    if (el._y !== y) {
+      el.style.transform = `translateY(${y}px)`;
+      el._y = y;
+    }
+    viewport.appendChild(el); // keep DOM order === row order
+  }
+
+  for (const [id, el] of rendered) {
+    if (seen.has(id)) continue;
+    rendered.delete(id);
+    if (animations) {
+      el.classList.add('leaving');
+      el._dieTimer = setTimeout(() => { dying.delete(id); release(el); }, 170);
+      dying.set(id, el);
+    } else {
+      release(el);
+    }
+  }
+}
+
+function release(el) {
+  el.remove();
+  el.className = 'row';
+  el.style.transform = '';
+  el._y = null;
+  pool.push(el);
 }
 
 function buildRow() {
@@ -129,11 +154,13 @@ function buildRow() {
     '<span class="twisty"></span>' +
     '<span class="favicon"><img alt=""></span>' +
     '<span class="label"></span>' +
+    '<span class="counter"></span>' +
     '<button class="close" title="Close">×</button>';
   el._twisty  = el.children[0];
   el._favicon = el.children[1].firstChild;
   el._label   = el.children[2];
-  el._close   = el.children[3];
+  el._counter = el.children[3];
+  el._close   = el.children[4];
   return el;
 }
 
@@ -151,11 +178,15 @@ function updateRow(el, row) {
   if (el.className !== cls) el.className = cls;
 
   el.dataset.tabId = row.id;
-  el.style.paddingLeft = `${row.depth * INDENT + 4}px`;
+  const pad = `${row.depth * INDENT + 4}px`;
+  if (el.style.paddingLeft !== pad) el.style.paddingLeft = pad;
   el.title = `${row.title}\n${row.url}`;
 
   if (el._label.textContent !== row.title)
     el._label.textContent = row.title;
+  const count = (row.flags & ROW_HAS_CHILDREN) && row.count > 0 ? String(row.count) : '';
+  if (el._counter.textContent !== count)
+    el._counter.textContent = count;
   if (!row.fav)
     el._favicon.removeAttribute('src');
   else if (el._favicon.getAttribute('src') !== row.fav)
@@ -163,10 +194,47 @@ function updateRow(el, row) {
 }
 
 // ---------------------------------------------------------------------------
+// selection helpers — multi-select rides on native tabs.highlight
+
+let lastClickedRowIndex = null; // index into rows[]
+
+function rowById(id) { return rows.find(r => r.id === id); }
+
+function highlightedIndices() {
+  return rows.filter(r => r.flags & ROW_HIGHLIGHTED).map(r => r.index);
+}
+
+function sendHighlight(indices) {
+  send({ type: 'highlight', indices });
+}
+
+function handleSelectClick(e, id) {
+  const rowIndex = rows.findIndex(r => r.id === id);
+  if (rowIndex < 0) return false;
+
+  if (e.ctrlKey || e.metaKey) { // toggle this tab in the selection
+    const set = new Set(highlightedIndices());
+    const idx = rows[rowIndex].index;
+    if (set.has(idx)) set.delete(idx); else set.add(idx);
+    sendHighlight([...set]);
+    lastClickedRowIndex = rowIndex;
+    return true;
+  }
+  if (e.shiftKey && lastClickedRowIndex != null) { // range select
+    const [a, b] = lastClickedRowIndex < rowIndex
+      ? [lastClickedRowIndex, rowIndex] : [rowIndex, lastClickedRowIndex];
+    sendHighlight(rows.slice(a, b + 1).map(r => r.index));
+    return true;
+  }
+  lastClickedRowIndex = rowIndex;
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // intents out
 
 function rowTabId(el) {
-  const row = el.closest('.row');
+  const row = el.closest && el.closest('.row');
   return row ? parseInt(row.dataset.tabId) : null;
 }
 
@@ -177,7 +245,7 @@ viewport.addEventListener('click', e => {
     send({ type: 'close', tabId: id });
   } else if (e.target.classList.contains('twisty')) {
     send({ type: 'toggleCollapse', tabId: id });
-  } else {
+  } else if (!handleSelectClick(e, id)) {
     send({ type: 'activate', tabId: id });
   }
 });
@@ -190,11 +258,118 @@ viewport.addEventListener('auxclick', e => {
   }
 });
 
+viewport.addEventListener('dblclick', e => {
+  const id = rowTabId(e.target);
+  if (id == null) return;
+  if (e.target.classList.contains('close') || e.target.classList.contains('twisty'))
+    return;
+  const row = rowById(id);
+  if (row && (row.flags & ROW_HAS_CHILDREN)) {
+    e.preventDefault();
+    send({ type: 'toggleCollapse', tabId: id });
+  }
+});
+
+// dblclick on empty space = new tab (as before)
 scroller.addEventListener('dblclick', e => {
   if (e.target === scroller || e.target === spacer)
     send({ type: 'newTab' });
 });
 document.getElementById('newtab').addEventListener('click', () => send({ type: 'newTab' }));
+
+// ---------------------------------------------------------------------------
+// context menu
+
+function escMd(s) { return String(s).replace(/\[/g, '\\[').replace(/\]/g, '\\]'); }
+
+function copyLinks(ids) {
+  // tree-aware: ids must be contiguous descendants-of-root following rows,
+  // so instead operate on row positions
+  const lines = [];
+  if (ids.length === 1) {
+    const i = rows.findIndex(r => r.id === ids[0]);
+    if (i < 0) return;
+    const base = rows[i].depth;
+    for (let j = i; j < rows.length; j++) {
+      const r = rows[j];
+      if (j > i && r.depth <= base) break;
+      lines.push('  '.repeat(r.depth - base) + `- [${escMd(r.title)}](${r.url})`);
+    }
+  } else {
+    for (const r of rows)
+      if (ids.includes(r.id))
+        lines.push(`- [${escMd(r.title)}](${r.url})`);
+  }
+  navigator.clipboard.writeText(lines.join('\n')).catch(() => {});
+}
+
+function placeMenu(x, y, items) {
+  menu.textContent = '';
+  for (const item of items) {
+    const el = document.createElement('button');
+    el.textContent = item.label;
+    el.addEventListener('click', () => { closeMenu(); item.act(); });
+    menu.appendChild(el);
+  }
+  menu.style.left = `${Math.min(x, innerWidth - 180)}px`;
+  menu.style.top  = `${Math.min(y, innerHeight - items.length * 26 - 8)}px`;
+  menu.hidden = false;
+}
+
+function openRowMenu(x, y, rowId) {
+  const row = rowById(rowId);
+  if (!row) return;
+  const inSelection = !!(row.flags & ROW_HIGHLIGHTED);
+  const selIds = inSelection
+    ? rows.filter(r => r.flags & ROW_HIGHLIGHTED).map(r => r.id)
+    : [rowId];
+  const multi = selIds.length > 1;
+  const hasKids = !!(row.flags & ROW_HAS_CHILDREN);
+
+  const items = [];
+  if (!multi) {
+    items.push(
+      { label: 'Activate', act: () => send({ type: 'activate', tabId: rowId }) },
+      { label: (row.flags & ROW_COLLAPSED) && hasKids
+          ? `Close tab and ${row.count} descendants`
+          : 'Close tab',
+        act: () => send({ type: 'close', tabId: rowId }) },
+    );
+    if (hasKids)
+      items.push({ label: `Close tree (${row.count + 1} tabs)`, act: () => send({ type: 'closeTree', tabId: rowId }) });
+  } else {
+    items.push({ label: `Close ${selIds.length} tabs`, act: () => send({ type: 'closeTabs', tabIds: selIds }) });
+  }
+  items.push(
+    { label: multi ? `Unload ${selIds.length} tabs` : 'Unload tab',
+      act: () => send({ type: 'discard', tabIds: selIds }) },
+    { label: multi ? `Copy ${selIds.length} links`
+                   : hasKids ? `Copy tree as links (${row.count + 1})` : 'Copy link',
+      act: () => copyLinks(selIds) },
+  );
+
+  placeMenu(x, y, items);
+}
+
+function closeMenu() { menu.hidden = true; }
+
+viewport.addEventListener('contextmenu', e => {
+  const id = rowTabId(e.target);
+  if (id == null) return;
+  e.preventDefault();
+  openRowMenu(e.clientX, e.clientY, id);
+});
+scroller.addEventListener('contextmenu', e => {
+  if (e.target === scroller || e.target === spacer) {
+    e.preventDefault();
+    placeMenu(e.clientX, e.clientY, [
+      { label: 'New tab', act: () => send({ type: 'newTab' }) },
+    ]);
+  }
+});
+document.addEventListener('click', e => { if (!menu.contains(e.target)) closeMenu(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeMenu(); });
+scroller.addEventListener('scroll', closeMenu, { passive: true });
 
 // ---------------------------------------------------------------------------
 // drag and drop — local preview only; the move itself is a background intent
@@ -275,9 +450,6 @@ viewport.addEventListener('dragend', () => {
 });
 
 // ---------------------------------------------------------------------------
-
-scroller.addEventListener('scroll', scheduleRender, { passive: true });
-window.addEventListener('resize', scheduleRender, { passive: true });
 
 ROW_H = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--row-h')) || 26;
 connect();

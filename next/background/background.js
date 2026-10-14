@@ -9,12 +9,14 @@ import {
   log,
 } from './model.js';
 import { assignUids, restoreWindowTree, restoreTabParent, saveWindowTree, uidFor, rememberClosed } from './persistence.js';
+import { initConfig } from './config.js';
 import * as I from './intents.js';
 
 // ---------------------------------------------------------------------------
 // startup: build the model from scratch, then restore the tree
 
 async function init() {
+  await initConfig();
   const wins = await browser.tabs.query({ windowType: 'normal' }).then(tabs => {
     const byWin = new Map();
     for (const t of tabs) {
@@ -126,8 +128,12 @@ browser.runtime.onConnect.addListener(port => {
     switch (msg.type) {
       case 'activate':       return I.activate(winId, msg.tabId);
       case 'close':          return I.close(winId, msg.tabId);
+      case 'closeTree':      return I.closeTree(winId, msg.tabId);
+      case 'closeTabs':      return I.closeTabs(winId, msg.tabIds);
+      case 'discard':        return I.discard(winId, msg.tabIds);
       case 'toggleCollapse': return I.toggleCollapse(winId, msg.tabId);
       case 'newTab':         return I.newTab(winId);
+      case 'highlight':      return I.highlight(winId, msg.indices);
       case 'move':           return I.move(winId, msg);
       case 'detachToRoot':   return I.detachToRoot(winId, msg.tabId);
     }

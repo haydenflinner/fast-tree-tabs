@@ -10,29 +10,65 @@ import {
   trackTab, log,
 } from './model.js';
 import { saveWindowTree } from './persistence.js';
+import { cfg } from './config.js';
 
 // ---------------------------------------------------------------------------
-// placement rules — the entire "where does a new tab go" policy
+// placement policy (see config.js DEFAULTS for the knobs)
 //
-//   has an opener in this window  -> child of opener, after opener's subtree
-//   no opener                     -> wherever Firefox put it (root)
-//
-// One knob: NEW_ROOT_AT_END forces opener-less tabs to the window's end.
+//   has opener in this window -> child of opener
+//   no opener                 -> cfg.newTabNoOpener
+//   child position            -> cfg.insertChildAt ('first' | 'last')
 
-const NEW_ROOT_AT_END = false;
+function activeRec(win) {
+  for (const rec of win.tabs.values())
+    if (rec.active) return rec;
+  return null;
+}
 
 export async function placeNewTab(nativeTab) {
   const rec = trackTab(nativeTab); // creates the Win if unseen
   const win = getWin(nativeTab.windowId);
+  const opener = nativeTab.openerTabId != null ? win.tabs.get(nativeTab.openerTabId) : null;
 
-  const opener = nativeTab.openerTabId != null && win.tabs.get(nativeTab.openerTabId);
-  if (opener && !opener.pinned) {
-    rec.parentId = opener.id;
-    await moveNative(win, [rec.id], insertionIndex(win, { parentId: opener.id, movingIds: [rec.id] }));
+  let parentId = null;
+  let target = null; // index into order-minus-this-tab
+
+  if (opener && !opener.pinned && !nativeTab.pinned) {
+    parentId = opener.id;
   }
-  else if (NEW_ROOT_AT_END && !nativeTab.pinned) {
-    await moveNative(win, [rec.id], insertionIndex(win, { movingIds: [rec.id] }));
+  else if (!nativeTab.pinned) {
+    const active = activeRec(win);
+    switch (cfg.newTabNoOpener) {
+      case 'child-of-active':
+        if (active && !active.pinned)
+          parentId = active.id;
+        break;
+      case 'after-active': {
+        const filtered = win.order.filter(id => id !== rec.id);
+        target = active ? subtreeEnd(win, filtered, active.id) : filtered.length;
+        break;
+      }
+      case 'end':
+        target = win.order.length - 1;
+        break;
+      // 'native': leave Firefox's placement alone
+    }
   }
+
+  if (parentId != null) {
+    rec.parentId = parentId;
+    const parent = win.tabs.get(parentId);
+    if (parent.collapsed) parent.collapsed = false; // the new tab should be visible
+    await moveNative(win, [rec.id], insertionIndex(win, {
+      parentId,
+      firstChild: cfg.insertChildAt === 'first',
+      movingIds:  [rec.id],
+    }));
+  }
+  else if (target != null) {
+    await moveNative(win, [rec.id], target);
+  }
+
   saveWindowTree(win.id);
   push(win.id);
   return rec;
@@ -45,6 +81,7 @@ export async function placeNewTab(nativeTab) {
 // i.e. "the slot these tabs should occupy" — which is exactly the semantics
 // browser.tabs.move() uses for its index argument.
 async function moveNative(win, ids, toIndex) {
+  if (toIndex == null) return;
   try {
     await browser.tabs.move(ids, { index: toIndex });
   } catch (e) {
@@ -52,9 +89,27 @@ async function moveNative(win, ids, toIndex) {
   }
 }
 
-// index within `order` after removing `movingIds`, corresponding to "after the
-// subtree of parentId" or "before beforeId" or "at end".
-function insertionIndex(win, { parentId = null, beforeId = null, movingIds = [] }) {
+// Index (in `filtered`, already free of moving ids) just past the contiguous
+// subtree of `id`.
+function subtreeEnd(win, filtered, id) {
+  const at = filtered.indexOf(id);
+  if (at < 0) return filtered.length;
+  const subtree = new Set([id]);
+  let end = at + 1;
+  for (let i = at + 1; i < filtered.length; i++) {
+    const rec = win.tabs.get(filtered[i]);
+    if (rec && subtree.has(rec.parentId)) { subtree.add(rec.id); end = i + 1; }
+    else break;
+  }
+  return end;
+}
+
+// Where in the order (with `movingIds` removed) an insertion should go:
+//   beforeId  -> right before that tab
+//   parentId  -> inside its subtree: firstChild ? right after the parent
+//                                           : after the whole subtree
+//   neither   -> end of the window
+function insertionIndex(win, { parentId = null, beforeId = null, firstChild = false, movingIds = [] }) {
   const moving = new Set(movingIds);
   const filtered = win.order.filter(id => !moving.has(id));
 
@@ -63,20 +118,16 @@ function insertionIndex(win, { parentId = null, beforeId = null, movingIds = [] 
     if (at >= 0) return at;
   }
   if (parentId != null) {
-    // position right after parent's last contiguous descendant
     const at = filtered.indexOf(parentId);
-    if (at >= 0) {
-      const subtree = new Set([parentId]);
-      let end = at + 1;
-      for (let i = at + 1; i < filtered.length; i++) {
-        const rec = win.tabs.get(filtered[i]);
-        if (rec && subtree.has(rec.parentId)) { subtree.add(rec.id); end = i + 1; }
-        else break;
-      }
-      return end;
-    }
+    if (at >= 0)
+      return firstChild ? at + 1 : subtreeEnd(win, filtered, parentId);
   }
   return filtered.length;
+}
+
+function subtreeIds(win, tabId) {
+  const keep = new Set([tabId, ...descendantsOf(win, tabId).map(r => r.id)]);
+  return win.order.filter(id => keep.has(id));
 }
 
 // ---------------------------------------------------------------------------
@@ -87,9 +138,42 @@ export async function activate(winId, tabId) {
   catch (e) { log('activate failed', e); }
 }
 
+// Closebox/menu "close": a collapsed tab takes its subtree with it; an
+// expanded tab closes alone and its children get promoted (model.untrackTab).
 export async function close(winId, tabId) {
-  try { await browser.tabs.remove(tabId); }
+  const win = getWin(winId);
+  const rec = win && win.tabs.get(tabId);
+  if (!rec) return;
+  const ids = (rec.collapsed && cfg.closeCollapsedClosesSubtree)
+    ? subtreeIds(win, tabId)
+    : [tabId];
+  try { await browser.tabs.remove(ids); }
   catch (e) { log('close failed', e); }
+}
+
+// Explicit "close tree": always the whole subtree, collapsed or not.
+export async function closeTree(winId, tabId) {
+  const win = getWin(winId);
+  if (!win || !win.tabs.get(tabId)) return;
+  try { await browser.tabs.remove(subtreeIds(win, tabId)); }
+  catch (e) { log('closeTree failed', e); }
+}
+
+export async function closeTabs(winId, tabIds) {
+  try { await browser.tabs.remove(tabIds); }
+  catch (e) { log('closeTabs failed', e); }
+}
+
+export async function discard(winId, tabIds) {
+  const win = getWin(winId);
+  if (!win) return;
+  const ok = tabIds.filter(id => {
+    const rec = win.tabs.get(id);
+    return rec && !rec.active && !rec.pinned && !rec.discarded;
+  });
+  if (ok.length === 0) return;
+  try { await browser.tabs.discard(ok); }
+  catch (e) { log('discard failed', e); }
 }
 
 export function toggleCollapse(winId, tabId) {
@@ -101,10 +185,23 @@ export function toggleCollapse(winId, tabId) {
   push(winId);
 }
 
-export async function newTab(winId, parentId = null) {
+export async function newTab(winId) {
   try {
     await browser.tabs.create({ windowId: winId, active: true });
   } catch (e) { log('newTab failed', e); }
+}
+
+// Multi-select. `indices` are native tab indexes; the active tab is always
+// included because Firefox requires it.
+export async function highlight(winId, indices) {
+  const win = getWin(winId);
+  if (!win) return;
+  const set = new Set(indices.filter(i => i >= 0 && i < win.order.length));
+  const activeIndex = win.order.findIndex(id => win.tabs.get(id)?.active);
+  if (activeIndex >= 0) set.add(activeIndex);
+  try {
+    await browser.tabs.highlight({ windowId: winId, tabs: [...set] });
+  } catch (e) { log('highlight failed', e); }
 }
 
 // Move tabId (subtree travels with it) under newParentId, before beforeId.

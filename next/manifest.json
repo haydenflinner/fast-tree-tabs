@@ -5,10 +5,15 @@
   "author": "wow",
   "description": "Minimal tree-style sidebar. Background owns canonical state; the sidebar is a pure projection that sends intents.",
   "permissions": [
+    "clipboardWrite",
     "sessions",
     "storage",
     "tabs"
   ],
+  "options_ui": {
+    "page": "/options/options.html",
+    "browser_style": false
+  },
   "icons": {
     "16": "/icons/icon.svg",
     "32": "/icons/icon.svg"

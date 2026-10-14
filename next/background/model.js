@@ -147,15 +147,33 @@ function depthOf(win, rec, memo) {
 
 export function flatten(win) {
   const rows = [];
-  const childCount = new Map(); // id -> direct child count, for HAS_CHILDREN
+
+  // one pass: parent -> ordered child ids, and total descendant counts
+  const childLists = new Map();
   for (const id of win.order) {
     const rec = win.tabs.get(id);
-    if (rec && rec.parentId != null)
-      childCount.set(rec.parentId, (childCount.get(rec.parentId) || 0) + 1);
+    if (rec && rec.parentId != null) {
+      let l = childLists.get(rec.parentId);
+      if (!l) childLists.set(rec.parentId, l = []);
+      l.push(id);
+    }
   }
+  const descCount = new Map();
+  const subtreeSize = (id, visiting = new Set()) => {
+    if (descCount.has(id)) return descCount.get(id);
+    if (visiting.has(id)) return 0; // cycle guard
+    visiting.add(id);
+    let n = 0;
+    for (const c of childLists.get(id) || [])
+      n += 1 + subtreeSize(c, visiting);
+    visiting.delete(id);
+    descCount.set(id, n);
+    return n;
+  };
+
   const depthMemo = new Map();
-  for (const id of win.order) {
-    const rec = win.tabs.get(id);
+  for (let i = 0; i < win.order.length; i++) {
+    const rec = win.tabs.get(win.order[i]);
     if (!rec) continue;
     if (hasCollapsedAncestor(win, rec)) continue; // hidden by collapse
 
@@ -164,15 +182,17 @@ export function flatten(win) {
     if (rec.highlighted) flags |= ROW_HIGHLIGHTED;
     if (rec.pinned)      flags |= ROW_PINNED;
     if (rec.collapsed)   flags |= ROW_COLLAPSED;
-    if (childCount.has(id)) flags |= ROW_HAS_CHILDREN;
+    if (childLists.has(rec.id)) flags |= ROW_HAS_CHILDREN;
     if (rec.status === 'loading') flags |= ROW_LOADING;
     if (rec.discarded)   flags |= ROW_DISCARDED;
     if (!rec.everActive && rec.status !== 'loading') flags |= ROW_UNREAD;
 
     rows.push({
       id,
+      index: i,          // native index — needed for tabs.highlight
       depth: depthOf(win, rec, depthMemo),
       flags,
+      count:       descCount.get(rec.id) ?? subtreeSize(rec.id),
       title:       rec.title || rec.url,
       url:         rec.url,
       fav:         rec.favIconUrl,
@@ -187,6 +207,13 @@ export function flatten(win) {
 
 const ports = new Map(); // winId -> Set<port>
 const pushScheduled = new Set();
+
+// The snapshot can carry extra UI-relevant meta (config knobs). Set by
+// config.js to avoid a circular import.
+let snapshotMetaProvider = null;
+export function setSnapshotMetaProvider(fn) {
+  snapshotMetaProvider = fn;
+}
 
 export function registerPort(port, winId) {
   let set = ports.get(winId);
@@ -219,11 +246,20 @@ function flushPush(winId) {
   const win = windows.get(winId);
   const set = ports.get(winId);
   if (!win || !set || set.size === 0) return;
-  const snapshot = { type: 'snapshot', version: win.version, rows: flatten(win) };
+  const snapshot = {
+    type:    'snapshot',
+    version: win.version,
+    rows:    flatten(win),
+    meta:    snapshotMetaProvider ? snapshotMetaProvider() : {},
+  };
   for (const port of set) {
     try { port.postMessage(snapshot); }
     catch (e) { set.delete(port); }
   }
+}
+
+export function pushAll() {
+  for (const winId of windows.keys()) push(winId);
 }
 
 // ---------------------------------------------------------------------------

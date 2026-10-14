@@ -55,6 +55,10 @@ html, body {
 }
 
 .row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
   display: flex;
   align-items: center;
   height: var(--row-h);
@@ -63,6 +67,11 @@ html, body {
   cursor: default;
   white-space: nowrap;
 }
+body.anim .row {
+  transition: transform 0.15s ease, opacity 0.15s ease, padding-left 0.15s ease;
+}
+.row.new { opacity: 0; }
+.row.leaving { opacity: 0; pointer-events: none; }
 .row:hover { background: var(--hover-bg); }
 .row.active { background: var(--active-bg); box-shadow: inset 2px 0 var(--accent); }
 .row.highlighted:not(.active) { background: #35343f; }
@@ -114,6 +123,14 @@ html, body {
   flex: 1;
 }
 
+.counter {
+  flex: none;
+  color: var(--dim);
+  font-size: 10px;
+  margin: 0 4px;
+}
+.row.collapsed .counter { color: var(--accent); }
+
 .close {
   flex: none;
   width: 16px;
@@ -131,3 +148,28 @@ html, body {
 }
 .row:hover .close { display: block; }
 .close:hover { background: #55545f; color: var(--fg); }
+
+#menu {
+  position: fixed;
+  z-index: 100;
+  min-width: 160px;
+  background: #2b2a33;
+  border: 1px solid #55545f;
+  border-radius: 5px;
+  padding: 3px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.5);
+}
+#menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  color: var(--fg);
+  border: none;
+  border-radius: 3px;
+  padding: 5px 10px;
+  font: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+#menu button:hover { background: var(--active-bg); }
