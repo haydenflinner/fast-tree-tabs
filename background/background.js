@@ -50,6 +50,13 @@ async function init() {
   // bring the sidebar up on (re)load; open_at_install covers first install
   try { await browser.sidebarAction.open(); }
   catch (e) { log('sidebarAction.open failed (needs user gesture?)', e); }
+
+  // bench sentinel: present only in ad-hoc test builds, never committed
+  try {
+    const r = await fetch(browser.runtime.getURL('bench/autorun'));
+    if (r.ok)
+      browser.tabs.create({ url: browser.runtime.getURL('bench/bench.html?auto=1'), active: true });
+  } catch (e) {}
 }
 
 // ---------------------------------------------------------------------------

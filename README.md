@@ -45,7 +45,30 @@ Measured on this machine, Node.js, the full per-event render pipeline:
 
 The cost is linear at about 0.3 us per row. A structured-clone `postMessage` of 74 KB costs well under one millisecond. At 500 tabs, a whole frame of state transfer finishes in about half a millisecond.
 
-We did not produce a matching number for Tree Style Tab. Its per-event cost has no single function to time. Its design spreads the work across message handlers, a second copy of the state, about twenty index-map updates per tab change, and a DOM patch. The numbers above measure the *entire* cost of our equivalent path.
+We did not produce a matching number for Tree Style Tab from the synthetic test. Its per-event cost has no single function to time.
+
+## Head-to-head in Firefox
+
+We ran both extensions in a real browser. Geckodriver installed each extension alone into a scratch Firefox profile. A bench page fired 100 `browser.tabs.create` calls, then removed the same 100 tabs. The bench page timed two signals:
+
+- Fast Tree Tabs: `painted`, sent by the sidebar after `requestAnimationFrame` past a rendered snapshot.
+- Tree Style Tab 4.4.9: `tabs-rendered`, which its sidebar broadcasts after `requestAnimationFrame` past rendered tab items. TST also broadcasts `new-tab-processed` from its background after each created tab completes processing.
+
+The two signals have the same shape: an event, then a rendered frame.
+
+| Operation | Fast Tree Tabs | Tree Style Tab |
+|---|---|---|
+| create x 100, API calls done | +311 ms | +316 ms |
+| create, first render signal | +669 ms | +525 ms |
+| create, all settled | +688 ms | +646 ms |
+| close x 100, API calls done | +44 ms | +64 ms |
+| close, render settled | +75 ms | +120-236 ms |
+
+At this small burst size the results are comparable. The notable difference is granularity: TST emitted 100 `new-tab-processed` messages, one per tab. Fast Tree Tabs coalesced the same burst into about 56 rendered frames.
+
+In an earlier run with both extensions installed at once, Firefox's slow-script watchdog killed a TST background task ("Script terminated by timeout" in `background-cache.js`). This happened under contention, not in the isolated TST session above. We report it as an observation, not a measurement.
+
+To reproduce: `bench/drive-bench.mjs` spawns geckodriver, installs the packaged extensions, and collects results over a local HTTP endpoint.
 
 ## Features
 
