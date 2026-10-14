@@ -1,0 +1,35 @@
+{
+  "manifest_version": 2,
+  "name": "TST Next",
+  "version": "0.1.0",
+  "author": "wow",
+  "description": "Minimal tree-style sidebar. Background owns canonical state; the sidebar is a pure projection that sends intents.",
+  "permissions": [
+    "sessions",
+    "storage",
+    "tabs"
+  ],
+  "icons": {
+    "16": "/icons/icon.svg",
+    "32": "/icons/icon.svg"
+  },
+  "background": {
+    "page": "/background/background.html"
+  },
+  "sidebar_action": {
+    "default_title": "Tabs",
+    "default_icon": {
+      "16": "/icons/icon.svg",
+      "32": "/icons/icon.svg"
+    },
+    "default_panel": "/sidebar/sidebar.html",
+    "browser_style": false,
+    "open_at_install": false
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "tst-next@local",
+      "strict_min_version": "128.0"
+    }
+  }
+}

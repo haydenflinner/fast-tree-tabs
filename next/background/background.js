@@ -1,0 +1,137 @@
+'use strict';
+
+// Wiring: native tab events -> model mutations -> push. The sidebar never sees
+// events; it sees snapshots.
+
+import {
+  windows, getWin, push, registerPort,
+  trackTab, untrackTab, moveInOrder, updateTab, setActive, setHighlighted,
+  log,
+} from './model.js';
+import { assignUids, restoreWindowTree, restoreTabParent, saveWindowTree, uidFor, rememberClosed } from './persistence.js';
+import * as I from './intents.js';
+
+// ---------------------------------------------------------------------------
+// startup: build the model from scratch, then restore the tree
+
+async function init() {
+  const wins = await browser.tabs.query({ windowType: 'normal' }).then(tabs => {
+    const byWin = new Map();
+    for (const t of tabs) {
+      if (!byWin.has(t.windowId)) byWin.set(t.windowId, []);
+      byWin.get(t.windowId).push(t);
+    }
+    return byWin;
+  });
+
+  for (const [winId, tabs] of wins) {
+    for (const tab of tabs) trackTab(tab);
+    const win = getWin(winId);
+    await assignUids(win);
+    if (!(await restoreWindowTree(win))) {
+      // no stored tree: fall back to opener links, which survive restarts
+      for (const rec of win.tabs.values()) {
+        const native = tabs.find(t => t.id === rec.id);
+        if (native && native.openerTabId != null && win.tabs.has(native.openerTabId))
+          rec.parentId = native.openerTabId;
+      }
+    }
+    push(winId, { immediate: true });
+    saveWindowTree(winId);
+  }
+  log('initialized', windows.size, 'windows');
+}
+
+// ---------------------------------------------------------------------------
+// native events -> model
+
+browser.tabs.onCreated.addListener(tab => {
+  I.placeNewTab(tab).then(async rec => {
+    // Undo-close restores the uid session value; if this "new" tab already
+    // has one, pull its parent from the stored tree.
+    rec.uid = await uidFor(tab.id);
+    await restoreTabParent(rec);
+    push(rec.windowId);
+  });
+});
+
+browser.tabs.onRemoved.addListener((tabId, info) => {
+  const win = getWin(info.windowId);
+  rememberClosed(win && win.tabs.get(tabId), win);
+  untrackTab(info.windowId, tabId);
+  saveWindowTree(info.windowId);
+});
+
+browser.tabs.onMoved.addListener((tabId, info) => {
+  moveInOrder(info.windowId, tabId, info.fromIndex, info.toIndex);
+});
+
+browser.tabs.onAttached.addListener((tabId, info) => {
+  browser.tabs.get(tabId).then(tab => {
+    trackTab(tab); // insert at new index; parent is dropped by the record
+    push(info.newWindowId);
+  }).catch(() => {});
+});
+
+browser.tabs.onDetached.addListener((tabId, info) => {
+  untrackTab(info.oldWindowId, tabId);
+  saveWindowTree(info.oldWindowId);
+});
+
+browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  updateTab(tab);
+}, { properties: ['title', 'url', 'status', 'favIconUrl', 'pinned', 'discarded', 'audible', 'mutedInfo'] });
+
+browser.tabs.onActivated.addListener(info => {
+  setActive(info.windowId, info.tabId, info.previousTabId);
+});
+
+browser.tabs.onHighlighted.addListener(info => {
+  setHighlighted(info.windowId, info.tabIds);
+});
+
+browser.windows.onRemoved.addListener(winId => {
+  windows.delete(winId);
+});
+
+browser.windows.onCreated.addListener(async win => {
+  if (win.type && win.type !== 'normal') return;
+  const tabs = await browser.tabs.query({ windowId: win.id }).catch(() => []);
+  for (const tab of tabs) trackTab(tab);
+  const w = getWin(win.id);
+  if (w) {
+    await assignUids(w);
+    await restoreWindowTree(w);
+    push(win.id);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// sidebar connection
+
+browser.runtime.onConnect.addListener(port => {
+  if (port.name !== 'sidebar') return;
+
+  let winId = null;
+  port.onMessage.addListener(async msg => {
+    if (!msg || typeof msg !== 'object') return;
+
+    if (msg.type === 'hello') {
+      winId = msg.windowId;
+      registerPort(port, winId);
+      return;
+    }
+    if (winId == null) return;
+
+    switch (msg.type) {
+      case 'activate':       return I.activate(winId, msg.tabId);
+      case 'close':          return I.close(winId, msg.tabId);
+      case 'toggleCollapse': return I.toggleCollapse(winId, msg.tabId);
+      case 'newTab':         return I.newTab(winId);
+      case 'move':           return I.move(winId, msg);
+      case 'detachToRoot':   return I.detachToRoot(winId, msg.tabId);
+    }
+  });
+});
+
+init();
