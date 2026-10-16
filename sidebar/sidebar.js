@@ -22,6 +22,7 @@ const scroller = document.getElementById('scroller');
 const spacer   = document.getElementById('spacer');
 const viewport = document.getElementById('viewport');
 const menu     = document.getElementById('menu');
+const dropline = document.getElementById('dropline');
 
 let ROW_H  = 26;
 let INDENT = 16;
@@ -64,6 +65,7 @@ function send(msg) {
 }
 
 let lastActiveId = null;
+let lastActiveIndex = -1;
 
 function onSnapshot(msg) {
   if (msg.type !== 'snapshot' || msg.version <= rowVersion) return;
@@ -75,14 +77,23 @@ function onSnapshot(msg) {
     if (msg.meta.indent) INDENT = msg.meta.indent;
     document.body.classList.toggle('anim', animations);
   }
-  maybeScrollToActive();
   render();
+  maybeScrollToActive();
 }
 
 function maybeScrollToActive() {
   const i = rows.findIndex(r => r.flags & ROW_ACTIVE);
-  if (i < 0 || rows[i].id === lastActiveId) return;
+  if (i < 0) {
+    lastActiveId = null;
+    lastActiveIndex = -1;
+    return;
+  }
+  // Follow the row's position, not just its identity: a snapshot can move the
+  // active tab (tree placement after create, drag-move, a subtree dropped
+  // above it) and the view must chase it or the row slides out of view.
+  if (rows[i].id === lastActiveId && i === lastActiveIndex) return;
   lastActiveId = rows[i].id;
+  lastActiveIndex = i;
   const top = i * ROW_H, bottom = top + ROW_H;
   if (top < scroller.scrollTop)
     scroller.scrollTop = top;
@@ -398,6 +409,11 @@ scroller.addEventListener('scroll', closeMenu, { passive: true });
 
 // ---------------------------------------------------------------------------
 // drag and drop — local preview only; the move itself is a background intent
+//
+// The pointer picks the exact slot: y chooses the gap between rows, x chooses
+// the depth (snapped to the indent grid). The drop line is drawn at that slot,
+// so the tab lands where the line is. The middle band of a row is the one
+// exception: it means drop-into-the-row (child slot follows insertChildAt).
 
 let dragId = null;
 
@@ -410,13 +426,34 @@ viewport.addEventListener('dragstart', e => {
 });
 
 function clearDropHints() {
-  for (const el of viewport.querySelectorAll('.drop-before,.drop-after,.drop-into'))
-    el.classList.remove('drop-before', 'drop-after', 'drop-into');
-  scroller.classList.remove('drop-root');
+  for (const el of viewport.querySelectorAll('.drop-into'))
+    el.classList.remove('drop-into');
+  dropline.style.display = 'none';
 }
 
-// Given a target row + pointer position, compute {newParentId, beforeId, hint}.
-function dropTarget(rowEl, clientY) {
+// The slot between rows[g-1] and rows[g]. Legal depths run 0..a.depth+1 (first
+// child of the row above), capped at a.depth when a is collapsed so a drop can
+// never vanish into a hidden subtree. The parent for depth d is the nearest
+// row above the gap at depth d-1; beforeId is simply the row below the gap.
+function gapTarget(g, clientX) {
+  const a = g > 0 ? rows[g - 1] : null;
+  const b = g < rows.length ? rows[g] : null;
+  let maxDepth = a ? a.depth : 0;
+  if (a && !(a.flags & ROW_COLLAPSED)) maxDepth = a.depth + 1;
+  const x = clientX + scroller.scrollLeft - 4; // content space, indent origin
+  let depth = Math.max(0, Math.min(maxDepth, Math.floor(x / INDENT)));
+  let newParentId = null;
+  if (depth > 0) {
+    for (let j = g - 1; j >= 0; j--) {
+      if (rows[j].depth < depth - 1) break; // malformed order — bail to root
+      if (rows[j].depth === depth - 1) { newParentId = rows[j].id; break; }
+    }
+    if (newParentId == null) depth = 0;
+  }
+  return { hint: 'line', gap: g, depth, newParentId, beforeId: b ? b.id : null, into: false };
+}
+
+function dropTarget(rowEl, clientX, clientY) {
   const id = parseInt(rowEl.dataset.tabId);
   const i = rows.findIndex(r => r.id === id);
   if (i < 0) return null;
@@ -424,18 +461,9 @@ function dropTarget(rowEl, clientY) {
   const rect = rowEl.getBoundingClientRect();
   const frac = (clientY - rect.top) / rect.height;
 
-  if (frac < 0.3) {
-    return { newParentId: row.pid, beforeId: row.id, hint: 'drop-before', el: rowEl };
-  }
-  if (frac > 0.7) {
-    // "after" = before the next row that isn't inside this row's subtree
-    for (let j = i + 1; j < rows.length; j++) {
-      if (rows[j].depth <= row.depth)
-        return { newParentId: row.pid, beforeId: rows[j].id, hint: 'drop-after', el: rowEl };
-    }
-    return { newParentId: row.pid, beforeId: null, hint: 'drop-after', el: rowEl };
-  }
-  return { newParentId: row.id, beforeId: null, hint: 'drop-into', el: rowEl };
+  if (frac >= 0.3 && frac <= 0.7)
+    return { hint: 'into', el: rowEl, newParentId: row.id, beforeId: null, into: true };
+  return gapTarget(frac < 0.3 ? i : i + 1, clientX);
 }
 
 let lastHint = null;
@@ -446,12 +474,16 @@ scroller.addEventListener('dragover', e => {
   e.dataTransfer.dropEffect = 'move';
   clearDropHints();
   const rowEl = e.target.closest('.row');
-  if (rowEl && parseInt(rowEl.dataset.tabId) !== dragId) {
-    lastHint = dropTarget(rowEl, e.clientY);
-    if (lastHint) lastHint.el.classList.add(lastHint.hint);
+  lastHint = rowEl
+    ? (parseInt(rowEl.dataset.tabId) === dragId ? null : dropTarget(rowEl, e.clientX, e.clientY))
+    : gapTarget(rows.length, e.clientX); // empty space = gap past the last row
+  if (!lastHint) return;
+  if (lastHint.hint === 'into') {
+    lastHint.el.classList.add('drop-into');
   } else {
-    lastHint = { root: true };
-    scroller.classList.add('drop-root');
+    dropline.style.display = 'block';
+    dropline.style.left = `${lastHint.depth * INDENT + 4}px`;
+    dropline.style.transform = `translateY(${lastHint.gap * ROW_H}px)`;
   }
 });
 
@@ -459,11 +491,8 @@ scroller.addEventListener('drop', e => {
   if (dragId == null) return;
   e.preventDefault();
   clearDropHints();
-  if (lastHint && lastHint.root) {
-    send({ type: 'detachToRoot', tabId: dragId });
-  } else if (lastHint) {
-    send({ type: 'move', tabId: dragId, newParentId: lastHint.newParentId, beforeId: lastHint.beforeId });
-  }
+  if (lastHint)
+    send({ type: 'move', tabId: dragId, newParentId: lastHint.newParentId, beforeId: lastHint.beforeId, into: !!lastHint.into });
   lastHint = null;
   dragId = null;
 });

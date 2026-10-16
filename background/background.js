@@ -169,7 +169,6 @@ browser.runtime.onConnect.addListener(port => {
       case 'newTab':         return I.newTab(winId);
       case 'highlight':      return I.highlight(winId, msg.indices);
       case 'move':           return I.move(winId, msg);
-      case 'detachToRoot':   return I.detachToRoot(winId, msg.tabId);
     }
   });
 });

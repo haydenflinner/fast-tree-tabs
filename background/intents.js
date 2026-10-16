@@ -221,8 +221,10 @@ export async function highlight(winId, indices) {
 }
 
 // Move tabId (subtree travels with it) under newParentId, before beforeId.
-// newParentId=null means root. Rejected silently on cycles/missing tabs.
-export async function move(winId, { tabId, newParentId = null, beforeId = null }) {
+// newParentId=null means root. `into` marks a bare drop-onto-parent — with no
+// beforeId it can't be told apart from "end of that subtree" — so child
+// position follows cfg.insertChildAt. Rejected silently on cycles/missing tabs.
+export async function move(winId, { tabId, newParentId = null, beforeId = null, into = false }) {
   const win = getWin(winId);
   const rec = win && win.tabs.get(tabId);
   if (!rec) return;
@@ -238,13 +240,13 @@ export async function move(winId, { tabId, newParentId = null, beforeId = null }
   const subtree = new Set(descendantsOf(win, rec.id).map(r => r.id));
   subtree.add(rec.id);
   const block = win.order.filter(id => subtree.has(id));
-  const target = insertionIndex(win, { parentId: newParentId, beforeId, movingIds: block });
+  const target = insertionIndex(win, {
+    parentId:  newParentId,
+    beforeId,
+    firstChild: into && cfg.insertChildAt === 'first',
+    movingIds: block,
+  });
   await moveNative(win, block, target);
   saveWindowTree(winId);
   push(winId);
-}
-
-// Drag onto the blank area = detach to root at end.
-export async function detachToRoot(winId, tabId) {
-  return move(winId, { tabId, newParentId: null, beforeId: null });
 }

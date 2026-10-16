@@ -84,10 +84,21 @@ body.anim .row {
 .row.unread .label { font-weight: 600; }
 .row.pinned .label { color: var(--dim); }
 
-.row.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
-.row.drop-after  { box-shadow: inset 0 -2px 0 var(--accent); }
 .row.drop-into   { box-shadow: inset 0 0 0 2px var(--accent); }
-#scroller.drop-root { box-shadow: inset 0 0 0 2px var(--accent); }
+
+/* free-standing insertion marker: positioned at the exact gap (y) and
+   depth (x) the drop will land at — drawn over row edges, hence z-index */
+#dropline {
+  position: absolute;
+  top: 0;
+  right: 0;
+  height: 2px;
+  margin-top: -1px;
+  background: var(--accent);
+  pointer-events: none;
+  display: none;
+  z-index: 5;
+}
 
 .twisty {
   width: 14px;
