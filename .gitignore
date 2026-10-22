@@ -1,3 +1,5 @@
 # never commit AMO credentials
 .firefox-jwt-*
 web-ext-artifacts/
+.DS_Store
+.amo-upload-uuid
