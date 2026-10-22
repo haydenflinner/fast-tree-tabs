@@ -10,6 +10,9 @@
     "en-US": "https://github.com/haydenflinner/fast-tree-tabs"
   },
   "version": {
-    "license": "MPL-2.0"
+    "license": "MPL-2.0",
+    "release_notes": {
+      "en-US": "- Multi-select drag-and-drop: dragging a selected tab now moves the whole selection — subtrees included — instead of just the dragged row.\n\n- Multi-tab operations (move, close, unload, copy links) now act on the tabs you explicitly selected via Cmd+click or Shift+click. The active tab no longer rides along automatically; include it deliberately with Cmd+click.\n\n- Cycle protection: a selection can't be dropped onto itself or under one of its own descendants."
+    }
   }
 }

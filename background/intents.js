@@ -233,29 +233,48 @@ export async function highlight(winId, indices) {
   } catch (e) { log('highlight failed', e); }
 }
 
-// Move tabId (subtree travels with it) under newParentId, before beforeId.
+// Move tabs (subtrees travel with them) under newParentId, before beforeId.
 // newParentId=null means root. `into` marks a bare drop-onto-parent — with no
 // beforeId it can't be told apart from "end of that subtree" — so child
-// position follows cfg.insertChildAt. Rejected silently on cycles/missing tabs.
-export async function move(winId, { tabId, newParentId = null, beforeId = null, into = false }) {
+// position follows cfg.insertChildAt. A selected tab whose ancestor is also
+// selected is not reparented — it travels inside its ancestor's subtree.
+// Rejected silently on cycles/missing tabs.
+export async function move(winId, { tabId, tabIds, newParentId = null, beforeId = null, into = false }) {
   const win = getWin(winId);
-  const rec = win && win.tabs.get(tabId);
-  if (!rec) return;
+  if (!win) return;
+  const ids = [...new Set(tabIds && tabIds.length ? tabIds : [tabId])]
+    .filter(id => id != null && win.tabs.get(id));
+  if (ids.length === 0) return;
   if (newParentId != null) {
-    if (newParentId === tabId) return;
-    if (!win.tabs.get(newParentId)) return;
-    if (isDescendantOf(win, newParentId, tabId)) return; // cycle
-    if (win.tabs.get(newParentId).pinned && !rec.pinned) return;
+    const parent = win.tabs.get(newParentId);
+    if (!parent) return;
+    if (ids.includes(newParentId)) return; // can't drop onto the selection
+    for (const id of ids)
+      if (isDescendantOf(win, newParentId, id)) return; // cycle
+    if (parent.pinned && ids.some(id => !win.tabs.get(id).pinned)) return;
   }
-  rec.parentId = newParentId;
 
-  // The subtree travels with the tab, preserving current relative order.
-  const subtree = new Set(descendantsOf(win, rec.id).map(r => r.id));
-  subtree.add(rec.id);
-  const block = win.order.filter(id => subtree.has(id));
+  const idSet = new Set(ids);
+  const underSelectedAncestor = id => {
+    let p = win.tabs.get(id).parentId;
+    while (p != null) {
+      if (idSet.has(p)) return true;
+      const up = win.tabs.get(p);
+      p = up ? up.parentId : null;
+    }
+    return false;
+  };
+  const roots = ids.filter(id => !underSelectedAncestor(id));
+  for (const id of roots) win.tabs.get(id).parentId = newParentId;
+
+  // The moving block travels together, preserving current relative order.
+  const blockSet = new Set(roots);
+  for (const id of roots)
+    for (const d of descendantsOf(win, id)) blockSet.add(d.id);
+  const block = win.order.filter(id => blockSet.has(id));
   const target = insertionIndex(win, {
     parentId:  newParentId,
-    beforeId,
+    beforeId:  blockSet.has(beforeId) ? null : beforeId,
     firstChild: into && cfg.insertChildAt === 'first',
     movingIds: block,
   });

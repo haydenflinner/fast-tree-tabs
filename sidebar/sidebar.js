@@ -105,6 +105,13 @@ function maybeScrollToActive() {
 // render — one absolutely-positioned element per row
 
 function render() {
+  // keep the explicit selection honest: anything no longer highlighted
+  // (selection collapsed, tab closed) drops out
+  for (const id of explicitSel) {
+    const r = rows.find(r => r.id === id);
+    if (!r || !(r.flags & ROW_HIGHLIGHTED)) explicitSel.delete(id);
+  }
+
   // Always allow scrolling one viewport past the end. ScrollTop only ever
   // clamps when content shrinks below the visible area — with a full
   // viewport of trailing space, closing rows (even whole trees) at the
@@ -228,7 +235,13 @@ function updateRow(el, row) {
 
 // ---------------------------------------------------------------------------
 // selection helpers — multi-select rides on native tabs.highlight
-
+//
+// explicitSel: rows the user toggled (Cmd+click) or ranged (Shift+click)
+// themselves. Firefox always folds the active tab into tabs.highlight, so
+// rec.highlighted alone can't tell "selected" from "just active" — the
+// explicit set is what multi-tab ops act on. Pruned to still-highlighted
+// rows on every snapshot.
+const explicitSel = new Set(); // tab ids
 let lastClickedRowIndex = null; // index into rows[]
 
 function rowById(id) { return rows.find(r => r.id === id); }
@@ -250,6 +263,7 @@ function handleSelectClick(e, id) {
     const idx = rows[rowIndex].index;
     if (set.has(idx)) set.delete(idx); else set.add(idx);
     sendHighlight([...set]);
+    if (explicitSel.has(id)) explicitSel.delete(id); else explicitSel.add(id);
     lastClickedRowIndex = rowIndex;
     return true;
   }
@@ -257,6 +271,8 @@ function handleSelectClick(e, id) {
     const [a, b] = lastClickedRowIndex < rowIndex
       ? [lastClickedRowIndex, rowIndex] : [rowIndex, lastClickedRowIndex];
     sendHighlight(rows.slice(a, b + 1).map(r => r.index));
+    explicitSel.clear();
+    for (const r of rows.slice(a, b + 1)) explicitSel.add(r.id);
     return true;
   }
   lastClickedRowIndex = rowIndex;
@@ -354,9 +370,9 @@ function placeMenu(x, y, items) {
 function openRowMenu(x, y, rowId) {
   const row = rowById(rowId);
   if (!row) return;
-  const inSelection = !!(row.flags & ROW_HIGHLIGHTED);
+  const inSelection = explicitSel.has(rowId);
   const selIds = inSelection
-    ? rows.filter(r => r.flags & ROW_HIGHLIGHTED).map(r => r.id)
+    ? rows.filter(r => explicitSel.has(r.id) && (r.flags & ROW_HIGHLIGHTED)).map(r => r.id)
     : [rowId];
   const multi = selIds.length > 1;
   const hasKids = !!(row.flags & ROW_HAS_CHILDREN);
@@ -491,8 +507,12 @@ scroller.addEventListener('drop', e => {
   if (dragId == null) return;
   e.preventDefault();
   clearDropHints();
-  if (lastHint)
-    send({ type: 'move', tabId: dragId, newParentId: lastHint.newParentId, beforeId: lastHint.beforeId, into: !!lastHint.into });
+  if (lastHint) {
+    const tabIds = explicitSel.has(dragId)
+      ? rows.filter(r => explicitSel.has(r.id) && (r.flags & ROW_HIGHLIGHTED)).map(r => r.id)
+      : [dragId];
+    send({ type: 'move', tabIds, newParentId: lastHint.newParentId, beforeId: lastHint.beforeId, into: !!lastHint.into });
+  }
   lastHint = null;
   dragId = null;
 });
