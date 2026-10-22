@@ -1,0 +1,3 @@
+# never commit AMO credentials
+.firefox-jwt-*
+web-ext-artifacts/

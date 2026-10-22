@@ -1,0 +1,15 @@
+{
+  "summary": {
+    "en-US": "A minimal tree-style tab sidebar. One copy of state, ~55 KB of JavaScript, no blocking overlay."
+  },
+  "description": {
+    "en-US": "Fast Tree Tabs is a tree-style tab sidebar for Firefox: collapse and expand subtrees, drag to reorder and reparent, close trees, multi-select, and session restore with the tree intact.\n\nUnlike other tree tab extensions it keeps exactly one copy of tab state — the background flattens the tree and pushes a snapshot to the sidebar, which renders it and sends intents back. The result is about 1,400 lines of JavaScript, four permissions, and no desync between copies that could disagree with each other."
+  },
+  "categories": ["tabs"],
+  "homepage": {
+    "en-US": "https://github.com/haydenflinner/fast-tree-tabs"
+  },
+  "version": {
+    "license": "MPL-2.0"
+  }
+}
