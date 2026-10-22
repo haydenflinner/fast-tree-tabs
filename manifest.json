@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Fast Tree Tabs",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "author": "haydenflinner",
   "description": "Minimal tree-style sidebar. Background owns canonical state; the sidebar is a pure projection that sends intents.",
   "permissions": [

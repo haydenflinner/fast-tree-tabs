@@ -59,6 +59,18 @@ export async function placeNewTab(nativeTab) {
           }
         }
         break;
+      case 'sibling-after-active': {
+        if (active && !active.pinned) {
+          // same parent as the active tab, slotted after its whole subtree —
+          // i.e. the next sibling, at whatever level the active tab sits
+          parentId = active.parentId;
+          const filtered = win.order.filter(id => id !== rec.id);
+          target = subtreeEnd(win, filtered, active.id);
+        } else {
+          target = win.order.length - 1;
+        }
+        break;
+      }
       case 'after-active': {
         const filtered = win.order.filter(id => id !== rec.id);
         target = active ? subtreeEnd(win, filtered, active.id) : filtered.length;
@@ -71,16 +83,17 @@ export async function placeNewTab(nativeTab) {
     }
   }
 
-  if (parentId != null)
+  if (parentId != null) {
     rec.parentId = parentId;
-  if (parentId != null && target == null) {
     const parent = win.tabs.get(parentId);
-    if (parent.collapsed) parent.collapsed = false; // the new tab should be visible
-    target = insertionIndex(win, {
-      parentId,
-      firstChild: cfg.insertChildAt === 'first',
-      movingIds:  [rec.id],
-    });
+    if (parent && parent.collapsed) parent.collapsed = false; // the new tab should be visible
+    if (target == null) {
+      target = insertionIndex(win, {
+        parentId,
+        firstChild: cfg.insertChildAt === 'first',
+        movingIds:  [rec.id],
+      });
+    }
   }
   if (target != null)
     await moveNative(win, [rec.id], target);

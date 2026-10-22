@@ -6,11 +6,12 @@ import { pushAll, setSnapshotMetaProvider } from './model.js';
 
 export const DEFAULTS = {
   // Where a tab opened with no opener lands:
-  //   'child-of-active' — first child of the active tab (its subtree)
-  //   'after-active'    — root tab immediately after the active tab
-  //   'end'             — root tab at the end of the window
-  //   'native'          — leave Firefox's own placement alone
-  newTabNoOpener: 'child-of-active',
+  //   'child-of-active'      — first child of the active tab (its subtree)
+  //   'sibling-after-active' — next sibling of the active tab, whatever its level
+  //   'after-active'         — root tab immediately after the active tab
+  //   'end'                  — root tab at the end of the window
+  //   'native'               — leave Firefox's own placement alone
+  newTabNoOpener: 'sibling-after-active',
 
   // Where a child tab lands relative to its parent's existing children:
   //   'first' — right after the parent (first thing in the subtree)
